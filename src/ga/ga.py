@@ -3,7 +3,7 @@ import logging
 from random import random
 
 from ase import Atoms
-from ase.build import fcc111
+from ase.build import surface
 from ase.constraints import FixAtoms
 from ase.ga.cutandsplicepairing import CutAndSplicePairing
 from ase.ga.data import DataConnection, PrepareDB
@@ -17,6 +17,7 @@ from ase.ga.startgenerator import StartGenerator
 from ase.ga.utilities import (closest_distances_generator,
                               get_all_atom_types)
 from ase.io import write, Trajectory
+from ase.io.lasp_PdO import write_arc
 import numpy as np
 
 from calc import Calculator
@@ -29,12 +30,12 @@ logger = logging.getLogger(__name__)
 class GA():
     calculator_method: str = 'MACE'
     model_path: str = 'PdSiOH.model'
-    ga_path: str = 'PdO_island_all_candidates.traj'
-    db_file: str = 'PdO_gadb.db'
+    ga_path: str = 'PdO_test_101_candidates.traj'
+    db_file: str = 'PdO_test_101_gadb.db'
     # Change the following three parameters to suit your needs
-    population_size:int = 200
+    population_size:int = 20
     mutation_probability:float = 0.3
-    n_to_test:int = 1800
+    n_to_test:int = 200
 
     def __post_init__(self) -> None:
         self.env = MCTEnv(calculator_method = self.calculator_method, 
@@ -43,14 +44,19 @@ class GA():
                                      model_path = self.model_path)
         
     def __call__(self) -> None:
-        logger.info("The initial energy of the GA is:", self.initial_energy)
         self.population()
         self.propoganda()
         return self.energy_output()
     
     def population(self):
         # create the surface
-        slab = fcc111('Pd', size=(6, 6, 3), vacuum=10.0)
+        slab = surface('Pd',(1,0,1),3)
+        cell = slab.cell
+        cell[2][2] = 30.0
+        slab.set_cell(cell)
+        for atom in slab:
+            atom.position[2] += 10.0
+        slab = slab * (2,2,1)
         slab.set_constraint(FixAtoms(mask=len(slab) * [True]))
 
         # define the volume in which the adsorbed cluster is optimized
@@ -65,7 +71,7 @@ class GA():
         v3[2] = 3.
 
         # Define the composition of the atoms to optimize
-        atom_numbers = 25 * [46] + 61 * [8]
+        atom_numbers = 16 * [46] + 32 * [8]
 
         # define the closest distance two atoms of a given species can be to each other
         unique_atom_types = get_all_atom_types(slab, atom_numbers)
@@ -77,7 +83,11 @@ class GA():
                             box_to_place_in=[p0, [v1, v2, v3]])
 
         # generate the starting population
-        starting_population = [sg.get_new_candidate() for _ in range(self.population_size)]
+        starting_population = []
+        for _ in range(self.population_size):
+            new_state = sg.get_new_candidate(maxiter = 1000)
+            if new_state is not None:
+                starting_population.append(new_state)
 
         # create the database to store information in
         d = PrepareDB(db_file_name=self.db_file,
@@ -89,7 +99,7 @@ class GA():
     
     def propoganda(self):
         # Initialize the different components of the GA
-        da = DataConnection('PdO_gadb.db')
+        da = DataConnection(self.db_file)
         atom_numbers_to_optimize = da.get_atom_numbers_to_optimize()
         n_to_optimize = len(atom_numbers_to_optimize)
         slab = da.get_slab()
