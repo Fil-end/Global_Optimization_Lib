@@ -8,5 +8,5 @@ The `global_optimization` package is a Python library designed for restoration o
   `asop`: `src/asop/asop.py`  
   
 ## Tips
-  The current `asop` module is in progressing !
+  The current `asop` module is in progressing !  
 ​	If necessary, this library will include more global optimization methods.
