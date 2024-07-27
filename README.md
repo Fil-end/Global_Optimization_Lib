@@ -12,4 +12,4 @@ The `global_optimization` package is a Python library designed for restoration o
 ​	If necessary, this library will include more global optimization methods.
 
 ## Importance
-  Here the `asop` method is just a copyright version by Filend, you may find the official edition from [ZhiPan Liu Group](https://zpliu.fudan.edu.cn/).
+  Here the `asop` method is just a copyright version by [Filend](https://github.com/Fil-end), you may find the official edition from [ZhiPan Liu Group](https://zpliu.fudan.edu.cn/).
