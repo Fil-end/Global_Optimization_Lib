@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import logging
 from random import random
+from typing import List
 
 from ase import Atoms
 from ase.build import surface
@@ -17,7 +18,7 @@ from ase.ga.startgenerator import StartGenerator
 from ase.ga.utilities import (closest_distances_generator,
                               get_all_atom_types)
 from ase.io import write, Trajectory
-from ase.io.lasp_PdO import write_arc
+from ase.io.lasp_PdO import write_single, add_text_head
 import numpy as np
 
 from calc import Calculator
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 class GA():
     calculator_method: str = 'MACE'
     model_path: str = 'PdSiOH.model'
-    ga_path: str = 'PdO_test_101_candidates.traj'
+    traj_path: str = 'PdO_test_101_candidates.traj'
     db_file: str = 'PdO_test_101_gadb.db'
     # Change the following three parameters to suit your needs
     population_size:int = 20
@@ -43,20 +44,21 @@ class GA():
         self.calculator = Calculator(calculate_method = self.calculator_method, 
                                      model_path = self.model_path)
         
-    def __call__(self) -> None:
-        self.population()
+    def __call__(self, slab:Atoms = None, atom_numbers:List = None) -> None:
+        self.population(slab, atom_numbers)
         self.propoganda()
-        return self.energy_output()
+        return self.postprocessing()
     
-    def population(self):
+    def population(self, slab:Atoms, atom_numbers:List):
         # create the surface
-        slab = surface('Pd',(1,0,1),3)
-        cell = slab.cell
-        cell[2][2] = 30.0
-        slab.set_cell(cell)
-        for atom in slab:
-            atom.position[2] += 10.0
-        slab = slab * (2,2,1)
+        if slab is None:
+            slab = surface('Ag',(1,0,1),3)
+            cell = slab.cell
+            cell[2][2] = 30.0
+            slab.set_cell(cell)
+            for atom in slab:
+                atom.position[2] += 10.0
+            slab = slab * (2,2,1)
         slab.set_constraint(FixAtoms(mask=len(slab) * [True]))
 
         # define the volume in which the adsorbed cluster is optimized
@@ -71,8 +73,9 @@ class GA():
         v3[2] = 3.
 
         # Define the composition of the atoms to optimize
-        atom_numbers = 16 * [46] + 32 * [8]
-
+        if atom_numbers is None:
+            atom_numbers = 16 * [46] + 32 * [8]
+        print(atom_numbers)
         # define the closest distance two atoms of a given species can be to each other
         unique_atom_types = get_all_atom_types(slab, atom_numbers)
         blmin = closest_distances_generator(atom_numbers=unique_atom_types,
@@ -162,26 +165,17 @@ class GA():
             da.add_relaxed_step(a3)
             population.update()
 
-        write(self.ga_path, da.get_all_relaxed_candidates())
+        write(self.traj_path, da.get_all_relaxed_candidates())
 
-    def get_ga_info(self,atoms:Atoms, info) -> None:
-        atoms.info = info
-
-    @property
-    def initial_slab(self) -> Atoms:
-        return self.env._generate_initial_slab()
-    
-    @property
-    def initial_energy(self):
-        energy = self.calculator(self.initial_slab, calc_type="single")
-        return energy + 24 * self.env.E_O2
-    
-    def energy_output(self):
-        traj = Trajectory(self.ga_path)
+    def postprocessing(self) -> Atoms:
+        traj = Trajectory(self.traj_path, 'r')
         energy_list = []
         for atoms in traj:
-            energy_list.append(atoms.get_potential_energy() - self.initial_energy)
-        return energy_list
+            energy_list.append(atoms.get_potential_energy())
+        return traj[0]
+    
+    def get_ga_info(self,atoms:Atoms, info) -> None:
+        atoms.info = info
 
 if __name__ == '__main__':
     ga = GA()
