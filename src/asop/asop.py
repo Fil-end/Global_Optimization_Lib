@@ -4,6 +4,9 @@ from typing import Optional, Tuple, List, Dict
 
 from ase import Atoms, Atom
 from ase.build import fcc110
+from ase.data import covalent_radii
+from ase.geometry import wrap_positions
+from ase.io import write
 import numpy as np
 from numpy.linalg import norm
 import torch
@@ -11,6 +14,10 @@ import torch
 from calc import Calculator
 from ga import GA
 from surface_env import MCTEnv
+
+K = 8.617 * 10E-5
+r_Ag = covalent_radii[47]
+r_O = covalent_radii[8]
 
 @dataclass
 class ASOP():
@@ -59,44 +66,67 @@ class ASOP():
         # Step 2: Structure exploration for compositions in a grid
         for grid_index in range(len(possible_grids)):
             atoms = self.initial_slab.copy()
+            # move the atoms to the center of the slab
+            self.rectify_position(atoms)
+            
             A_matrix_2D = possible_A[grid_index]
+            print(f"TM is {A_matrix_2D}")
             A_matrix = np.array([[A_matrix_2D[0][0], A_matrix_2D[0][1], 0],
                                  [A_matrix_2D[1][0], A_matrix_2D[1][1], 0],
                                  [0                , 0                , 1]])
-
-            atoms.set_cell(A_matrix * primitive_cell)
+            atoms.set_cell(np.dot(A_matrix, primitive_cell))
             self.in_cell(atoms)
-            
             # num of atoms
+            n_Ag = 0
+           
             A = np.cross(A_matrix_2D[0], A_matrix_2D[1])
             for n_Ag in range(A):
-                for n_O in range(A):
-                    n_Ag += 1
+                n_Ag += 1
+                n_O = 0
+                for n_O in range(A): 
                     n_O += 1
-
+                    # calculate energy of clean surface
+                    new_state = atoms.copy()
+                    self.env.to_constraint(new_state)
+                    new_state, initial_energy, _ = self.calculator(new_state)
+                    
                     # Stage A: Initial structure generation
+                    print(n_Ag, n_O)
                     if self.calculator_method in ['LASP', 'Lasp', 'lasp']:
-                        atoms = self.choose_ads_site(atoms, n_Ag, n_O)
+                        new_state = self.choose_ads_site(new_state, n_Ag, n_O)
                     else:
-                        ga = GA(calculator_method = self.calculator_method,
-                                model_path = self.model_path,
-                                db_file = f'{self.db_file}/{norm(A_matrix_2D[0])}x{norm(A_matrix_2D[1])}_Ag{n_Ag}O{n_O}.db',
-                                traj_path = f'{self.traj_file}/{norm(A_matrix_2D[0])}x{norm(A_matrix_2D[1])}_Ag{n_Ag}O{n_O}.traj')
-                        atom_numbers = n_Ag * [47] + n_O * [8]
-                        atoms = ga(atoms, atom_numbers)
+                        u_p,v_p = A_matrix_2D
+                        norm_u = np.round(norm(u_p), 3)
+                        norm_v = np.round(norm(v_p), 3)
+                        db_file = f'{self.db_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.db',
+                        traj_path = f'{self.traj_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.traj'
 
-                    # stage B-D
-                    E_miu, current_structure = self.get_miu(atoms)
+                        if not os.path.exists(traj_path):
+                            if os.path.exists(db_file):
+                                os.remove(db_file)
+                            ga = GA(calculator_method = self.calculator_method,
+                                    model_path = self.model_path,
+                                    db_file = db_file,
+                                    traj_path = traj_path)
+                            atom_numbers = n_Ag * [47] + n_O * [8]
+                            # new_state = self.choose_ads_site(new_state, n_Ag, n_O)
+                            new_state = ga(new_state, atom_numbers)
+                    write('test.xyz', new_state)
+
+                    # stage B-C
+                    current_energy, current_structure = self.get_energy(new_state)
+                    # Stage D: Thermodynamics stability evaluation.
+                    E_miu = self.miu(current_energy, initial_energy, n_Ag, n_O,A)
                     
                     history['miu'].append(E_miu)
-                    history['structure'].append(current_structure)
+                    history['structures'].append(current_structure)
                     history['Ag'].append(n_Ag)
                     history['O'].append(n_O)
 
-        self.save_atoms(history, 
-                        possible_A, 
-                        possible_grids,
-                        A_list)
+            self.save_atoms(history, 
+                            possible_A, 
+                            possible_grids,
+                            A_list)
 
 
     def save_atoms(self, 
@@ -108,7 +138,7 @@ class ASOP():
         np.savez_compressed(
             save_path,
             miu = history['miu'],
-            structures = history['structure'],
+            structures = history['structures'],
             Ag = history['Ag'],
             O = history['O'],
             A_matrix = possible_A,
@@ -116,28 +146,63 @@ class ASOP():
             grids = possible_grids,
         )
 
-    def get_miu(self, atoms:Atoms) -> Tuple[float, np.asarray]:
+    def get_energy(self, atoms:Atoms) -> Tuple[float, np.asarray]:
         new_state = atoms.copy()
 
         self.env.to_constraint(new_state)
         # Stage B: SSW global structure search
         # Stage C: Self-learning of G-NN potential(Suspending)
-        new_state, current_energy, _ = self.calculator(new_state, calc_type = 'ssw')
+        if self.calculator_method in ['LASP', 'Lasp', 'lasp']:
+            new_state, current_energy = self.calculator(new_state, calc_type = 'ssw')
+        elif self.calculator_method in ['MACE', 'Mace', 'mace']:
+            new_state, current_energy, _ = self.calculator(new_state)
         
-        # Stage D: Thermodynamics stability evaluation.
-        E_miu = self.miu(current_energy)
         structure = self.pd(new_state)
 
-        return E_miu, structure
+        return current_energy, structure
     
+    def rectify_position(self, atoms:Atoms) -> None:
+        positions = atoms.get_positions() - np.array([atoms.cell[0][0]/2, atoms.cell[1][1]/2, 0])
+        atoms.positions = positions
+        # Here the initial slab is a grand board
+        atoms.set_pbc([False,False,False])
 
     def in_cell(self, atoms:Atoms) -> None:
         # A function just like material studio "in cell" display
-        cell = atoms.cell
-        scaled_positions = cell.scaled_positions(atoms.positions)
-        atoms.set_scaled_positions(scaled_positions)
+        scaled_positions = atoms.get_scaled_positions()
         del atoms[[[atom_idx for atom_idx in range(len(atoms)) \
-                    if max(scaled_positions[atom_idx]) >= 1]]]
+                    if max(scaled_positions[atom_idx]) >= 1 or \
+                       min(scaled_positions[atom_idx]) < -10E-3]]]
+        atoms.set_pbc([True, True, False])
+
+    def in_cell_sites(self,atoms:Atoms, site_type = 'surf') -> None:
+        primitive_cell = atoms.cell
+        atoms = atoms * (3,3,1)
+        self.rectify_position(atoms)
+
+        total_sites = []
+        if site_type == 'surf':
+            total_surf_sites, _ = self.env.get_surf_sites(atoms)
+            for surf_site in total_surf_sites:
+                w_p = wrap_positions([surf_site[0:3].tolist()], primitive_cell.tolist(), pbc=[1,1,0])
+                if '%.2f' % surf_site[0] == '%.2f' % w_p.tolist()[0][0] and \
+                    '%.2f' % surf_site[1] == '%.2f' % w_p.tolist()[0][1] and \
+                    '%.2f' % surf_site[2] == '%.2f' % w_p.tolist()[0][2]:
+                    total_sites.append(surf_site.tolist())
+
+        elif site_type == 'sub':
+            total_sub_sites, _ = self.env.get_sub_sites(atoms)
+            for sub_site in total_sub_sites:
+                w_p = wrap_positions([sub_site[0:3].tolist()], primitive_cell.tolist(), pbc=[1,1,0])
+                if '%.2f' % sub_site[0] == '%.2f' % w_p.tolist()[0][0] and \
+                    '%.2f' % sub_site[1] == '%.2f' % w_p.tolist()[0][1] and \
+                    '%.2f' % sub_site[2] == '%.2f' % w_p.tolist()[0][2]:
+                    total_sites.append(sub_site.tolist())
+
+        total_sites = np.array([del_idx for n,del_idx in enumerate(total_sites) \
+                                if del_idx not in total_sites[:n]])
+        return np.array(total_sites)
+        
 
     def possible_grids(self) -> Tuple[np.asarray, np.asarray]:
         # for fcc110 [u, v] = [√6/3, 0]
@@ -163,7 +228,7 @@ class ASOP():
             for k in total_k:
                 p_hk = np.array([h,k])
 
-                # Filter 1: All A: (h,k) must be positive
+                # Filter 1: All A: (h,k) must be positive definite
                 if not np.all(np.linalg.eigvals(p_hk + p_hk.T)> 0):
                     continue
 
@@ -216,60 +281,70 @@ class ASOP():
     def distance(self, x1: np.asarray, x2:np.asarray) -> float:
         return norm(x1 - x2)
 
-    def empty_sites(self, atoms:Atoms, surf_atoms:List) -> np.asarray:
-        surf_sites, _ = self.env.get_surf_sites(atoms)
-        sub_sites, _ = self.env.get_sub_sites(atoms)
+    def empty_sites(self, atoms:Atoms) -> np.asarray:
+        surf_atoms = self.env.get_surf_list(atoms)
+        sub_sites = self.in_cell_sites(atoms, site_type='sub')
 
         empty_sites = []
-        if surf_atoms is []:
+
+        print(f"The surf atoms are {surf_atoms}")
+        if not surf_atoms:
+            # Sub layer is empty
             empty_sites = sub_sites
         else:
             for sub_site in sub_sites:
+                to_other_ele_dis_1 = []
                 for atom_idx in surf_atoms:
-                    distance = self.distance(atoms.get_positions()[atom_idx], sub_site[0:3])
-                    if distance >= 1.5 and distance <= 3.0:
-                        empty_sites.append(sub_site)
-                        break
+                    distance = self.distance(atoms.get_positions()[atom_idx], 
+                                             sub_site[0:3] + np.array([0, 0, self.env.d_list[int(sub_site[3]) - 1 ]]))
+                    to_other_ele_dis_1.append(distance)
+
+                if min(to_other_ele_dis_1) >= 1.5:
+                    empty_sites.append(sub_site)
             # All sub layer sites has been occupied
-            if empty_sites is []:
+            if not empty_sites:
+                surf_sites = self.in_cell_sites(atoms, site_type='surf')
                 layer_atoms = self.env.get_layer_list(atoms)
                 if layer_atoms:
                     for surf_site in surf_sites:
+                        to_other_ele_dis_2 = []
                         for atom_idx in layer_atoms:
-                            distance = self.distance(atoms.get_positions()[atom_idx], surf_site[0:3])
-                            if distance >= 1.5 and distance <= 3.0:
-                                empty_sites.append(surf_site)
-                                break
+                            distance = self.distance(atoms.get_positions()[atom_idx], 
+                                                     surf_site[0:3]+ np.array([0, 0, self.env.d_list[int(surf_site[3]) - 1 ]]))
+                            to_other_ele_dis_2.append(distance)
+                        if min(to_other_ele_dis_2) >= 1.5:
+                            empty_sites.append(surf_site)
                 else:
                     empty_sites = surf_sites
+            # print(empty_sites)
         return empty_sites
 
     def choose_ads_site(self,atoms:Atoms, n_Ag:int, n_O:int) -> Atoms:
         new_state = atoms.copy()
         for _ in range(n_Ag):
-            surf_atoms = self.get_surf_list(new_state)
-            empty_sites = self.empty_sites(new_state, surf_atoms)
+            empty_sites = self.empty_sites(new_state)
             Ag_site = empty_sites[np.random.randint(len(empty_sites))]
-            Ag = Atom('Ag', (Ag_site[0] + self.env.d_list[int(Ag_site[3]) - 1 ], 
-                             Ag_site[1] + self.env.d_list[int(Ag_site[3]) - 1 ], 
-                             Ag_site[2] + self.env.d_list[int(Ag_site[3]) - 1 ]))
+            # print(Ag_site)
+            Ag = Atom('Ag', (Ag_site[0], 
+                             Ag_site[1], 
+                             Ag_site[2] + self.env.d_list[int(Ag_site[3]) - 1 ] * 1.5))
             new_state += Ag
 
         for _ in range(n_O):
-            surf_atoms = self.get_surf_list(new_state)
-            empty_sites = self.empty_sites(new_state, surf_atoms)
+            empty_sites = self.empty_sites(new_state)
             O_site = empty_sites[np.random.randint(len(empty_sites))]
-            O = Atom('O', (O_site[0] + self.env.d_list[int(O_site[3]) - 1 ], 
-                             O_site[1] + self.env.d_list[int(O_site[3]) - 1 ], 
-                             O_site[2] + self.env.d_list[int(O_site[3]) - 1 ]))
+            # print(O_site)
+            O = Atom('O', (O_site[0], 
+                           O_site[1], 
+                           O_site[2] + self.env.d_list[int(O_site[3]) - 1 ]))
             new_state += O
         return new_state
     
-    def add_mole(self, mole:str, d:Optional[float]) -> float:
+    def add_mole(self, mole:str, d:Optional[float] = None) -> float:
         new_state = self.initial_slab.copy()
-        energy_1 = self.calculator_method(new_state, calc_type = 'single')
+        energy_1 = self.calculator(new_state, calc_type = 'single')
         if len(mole) == 1:
-            ele = Atom(mole, (new_state.get_cell()[0][0] / 2, 
+            ele = Atom(mole[0], (new_state.get_cell()[0][0] / 2, 
                               new_state.get_cell()[1][1] / 2, 
                               new_state.get_cell()[2][2] - 5.0))
             new_state += ele
@@ -282,36 +357,40 @@ class ASOP():
                                    new_state.get_cell()[2][2] - 5.0 + d))
             new_state += ele_1
             new_state += ele_2
-        energy_2 = self.calculator_method(new_state, calc_type = 'single')
+        energy_2 = self.calculator(new_state, calc_type = 'single')
         energy = energy_2 - energy_1
         return energy
     
     @property
-    def E_O2(self) -> float:
-        return self.add_mole(mole = 'OO', d = 1.21)
+    def E_O(self) -> float:
+        return (self.add_mole(mole = 'OO', d = 1.21) + K * self.T * np.log(self.P / 101325))/ 2
     
     @property
     def E_Ag(self) -> float:
-        return self.add_mole(mole = 'Ag')
-    
-    @property
-    def initial_energy(self) -> float:
-        self.env.to_constraint(self.initial_slab)
-        _, initial_energy, _ = self.calculator(self.initial_slab)
-        return initial_energy
+        return self.calculator(self.mock_slab, calc_type = 'single') / len(self.mock_slab)
     
     def pd(self, atoms:Atoms) -> np.asarray:
         pad =  torch.nn.ZeroPad2d(padding = (0,0,0, 200 - len(atoms.get_scaled_positions())))
         return np.array(pad(torch.tensor(atoms.get_positions())))
     
-    def miu(self, current_energy:float, n_Ag: int, n_O: int, A:int) -> float:
-        current_energy -= self.E_Ag * n_Ag + self.n_O2 * n_O / 2
-        miu = (current_energy - self.initial_energy) / A
+    def miu(self, 
+            current_energy:float, 
+            initial_energy:float, 
+            n_Ag: int, 
+            n_O: int,
+            A:int) -> float:
+        current_energy -= self.E_Ag * n_Ag + self.E_O * n_O
+        miu = (current_energy - initial_energy) / A
         return miu
+    
+    def postprocessing(self):
+        # This part is for the  Step 3: Favorable composition determination
+        # by Monte Carlo selection
+        pass
 
 if __name__ == '__main__':
-    initial_slab = fcc110('Ag', size=(6, 6, 3), vacuum=10.0)
-    mock_slab = fcc110('Ag', size = (1,1,3), vacuum = 10.0)
+    initial_slab = fcc110('Ag', size=(20, 20, 4), vacuum=10.0)
+    mock_slab = fcc110('Ag', size = (1,1,4), vacuum = 10.0)
     asop = ASOP(initial_slab = initial_slab,
                 mock_slab=mock_slab,
                 calculator_method = 'MACE',
