@@ -80,6 +80,8 @@ class ASOP():
             atoms.set_cell(np.dot(A_matrix, primitive_cell))
             self.in_cell(atoms)
 
+            # calculate energy of clean surface
+            self.env.to_constraint(atoms)
             atoms, initial_energy, _ = self.calculator(atoms)
            
             A = np.cross(A_matrix_2D[0], A_matrix_2D[1])
@@ -87,10 +89,7 @@ class ASOP():
                 n_Ag += 1
                 for n_O in range(A): 
                     n_O += 1
-                    # calculate energy of clean surface
                     new_state = atoms.copy()
-                    self.env.to_constraint(new_state)
-                    
                     # Stage A: Initial structure generation
                     if self.calculator_method in ['LASP', 'Lasp', 'lasp']:
                         print(n_Ag, n_O)
@@ -100,13 +99,24 @@ class ASOP():
                         u_p,v_p = A_matrix_2D
                         norm_u = np.round(norm(u_p), 3)
                         norm_v = np.round(norm(v_p), 3)
-                        ga = GA(calculator_method = self.calculator_method,
-                                model_path = self.model_path,
-                                db_file = f'{self.db_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.db',
-                                traj_path = f'{self.traj_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.traj')
-                        atom_numbers = n_Ag * [47] + n_O * [8]
-                        new_state = ga(new_state, atom_numbers)
+                        db_file = f'{self.db_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.db'
+                        traj_path = f'{self.traj_file}/{norm_u}x{norm_v}_Ag{n_Ag}O{n_O}.traj'
 
+                        if not os.path.exists(traj_path):
+                            if os.path.exists(db_file):
+                                os.remove(db_file)
+                            ga = GA(calculator_method = self.calculator_method,
+                                    model_path = self.model_path,
+                                    db_file = db_file,
+                                    traj_path = traj_path)
+                            atom_numbers = n_Ag * [47] + n_O * [8]
+                            try:
+                                # new_state = self.choose_ads_site(new_state, n_Ag, n_O)
+                                new_state = ga(new_state, atom_numbers)
+                            except:
+                                print(f'Logging Failed: TM is {A_matrix_2D}, Ag:{n_Ag}, O:{n_O}')
+                                continue
+                    
                     # stage B-C
                     try:
                         current_energy, current_structure = self.get_energy(new_state)
