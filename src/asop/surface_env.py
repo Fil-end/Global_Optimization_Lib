@@ -26,11 +26,11 @@ from scipy.spatial import Delaunay
 import torch
 import torch.nn as nn
 
-from EDRL.io.lasp import write_arc
-from EDRL.tools.utils import to_pad_the_array
+# from EDRL.io.lasp import write_arc
+# from EDRL.tools.utils import to_pad_the_array
 from calc import Calculator
-from EDRL.ts.gpr import GPR
-import EDRL.utils.Painn_utils as Painn
+# from EDRL.ts.gpr import GPR
+# import EDRL.utils.Painn_utils as Painn
 
 bottom_z = 10.7
 deep_z = 12.1
@@ -131,9 +131,9 @@ class MCTEnv(gym.Env):
             self.max_observation_atoms = 2 * len(self.initial_slab)
 
         # 定义动作空间
-        self.action_space = spaces.Discrete(len(ACTION_SPACES))
+        # self.action_space = spaces.Discrete(len(ACTION_SPACES))
         # 定义状态空间
-        self.observation_space = self.get_observation_space()
+        # self.observation_space = self.get_observation_space()
 
         # 一轮过后重新回到初始状态
         # self.reset()
