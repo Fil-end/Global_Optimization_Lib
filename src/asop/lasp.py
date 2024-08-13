@@ -2,7 +2,7 @@ import os
 import re
 
 from ase.calculators.calculator import FileIOCalculator, Parameters, ReadError
-import ase.io.lasp_PdO as io
+from ase.io.dmol import write_dmol_arc
 import numpy as np
 
 class LASP(FileIOCalculator):
@@ -100,7 +100,8 @@ class LASP(FileIOCalculator):
         p = self.parameters
         p.write(self.label + '.ase')
         p['label'] = self.label
-        io.write_arc([atoms], **p)
+        atoms.pbc = True
+        write_dmol_arc('input.arc', [atoms])
         self.write_lasp(atoms, **p)
 
     def read(self, label):

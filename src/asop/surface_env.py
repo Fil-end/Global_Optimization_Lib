@@ -33,7 +33,7 @@ from EDRL.ts.gpr import GPR
 import EDRL.utils.Painn_utils as Painn
 
 bottom_z = 10.7
-deep_z = 12.0
+deep_z = 12.1
 sub_z = 14.0
 surf_z = 15.6
 layer_z = 19.4
@@ -100,8 +100,8 @@ class MCTEnv(gym.Env):
         self.calculator = Calculator(calculate_method = self.calculator_method,
                                      model_path = self.model_path)
 
-        self.E_O2 = self.add_mole("O2")
-        self.E_O3 = self.add_mole("O3")
+        # self.E_O2 = self.add_mole("O2")
+        # self.E_O3 = self.add_mole("O3")
 
         self.episode = 0  # 初始化episode为0
         self.timestep = 0  # 初始化时间步数为0
@@ -109,6 +109,7 @@ class MCTEnv(gym.Env):
         self.H = self.reaction_H * self.reaction_n
 
         self.range = [0.9, 1.1]
+        self.d_list = [1.5, 1.3, 0.6]
         self.reward_threshold = 0
         # 保存history,plots,trajs,opt
         if not os.path.exists(self.save_dir):
@@ -135,7 +136,7 @@ class MCTEnv(gym.Env):
         self.observation_space = self.get_observation_space()
 
         # 一轮过后重新回到初始状态
-        self.reset()
+        # self.reset()
 
         return
 
@@ -394,7 +395,6 @@ class MCTEnv(gym.Env):
         self.n_O3 = 0
 
         self.atoms = self._generate_initial_slab()
-        self.d_list = [1.5, 1.3, 0.6]
 
         self.to_constraint(self.atoms)
         self.atoms, self.initial_energy, self.initial_force= self.calculator(self.atoms)

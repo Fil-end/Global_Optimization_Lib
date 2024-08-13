@@ -1,15 +1,16 @@
 from typing import List,Tuple
 from dataclasses import dataclass
+import time
 import torch
 
 import ase
 from ase import units
 from ase.calculators.emt import EMT
 from ase.constraints import FixAtoms
+from ase.io.dmol import read_dmol_arc,write_dmol_arc
 from ase.md.langevin import Langevin
 from ase.optimize import LBFGS
 
-from EDRL.io.lasp import write_arc, read_arc
 from lasp import LASP
 
 LASP_COMMAND = 'unset $(compgen -v | grep SLURM); unset SLURM_PROCID;mpirun -np 24 lasp'
@@ -151,26 +152,28 @@ class Calculator:
         ts_energy = neb.get_potential_energy()
         return ts_energy, dyn.converged()
     
-    '''-------------------LASP_calc---------------------------'''    
+    '''-------------------LASP_calc---------------------------''' 
     def lasp_calc(self, atoms):
-        write_arc([atoms])
         atoms.calc = LASP(task='opt', pot=self.model_path, potential='NN D3', command = LASP_COMMAND)
         energy = atoms.get_potential_energy()
         force = atoms.get_forces()
-        atoms = read_arc('allstr.arc', index = -1)
+        atoms = read_dmol_arc('allstr.arc', index = -1)
+        atoms.set_pbc([True, True, False])
         return atoms, energy, force
     
     def lasp_single_calc(self, atoms):
-        write_arc([atoms])
         atoms.calc = LASP(task='single-energy', pot=self.model_path, potential='NN D3', command = LASP_COMMAND)
         energy = atoms.get_potential_energy()
         return energy
     
     def lasp_ssw_calc(self, atoms):
-        write_arc([atoms])
         atoms.calc = LASP(task='long-ssw', pot=self.model_path, potential='NN D3', command = LASP_COMMAND)
         energy = atoms.get_potential_energy()
-        atoms = read_arc('best.arc', index = -1)
+        try:
+            atoms = read_dmol_arc('best.arc', index = -1)
+        except:
+            atoms = read_dmol_arc('all.arc', index = -1)
+        atoms.set_pbc([True, True, False])
         return atoms, energy
     
     def lasp_md_calc(self, atoms):
@@ -182,8 +185,10 @@ class Calculator:
         return atoms
     
     def lasp_ts_calc(self, atoms:List[ase.Atoms]):
-        write_arc(atoms[0])
-        write_arc(atoms)
+        write_dmol_arc('input.arc', [atoms[0]])
+        write_dmol_arc('uncm.arc', atoms)
+        for atom in atoms:
+            atom.set_pbc([True, True, False])
         atoms[0].calc = LASP(task='TS', pot=self.model_path, potential='NN D3', command = LASP_COMMAND)
         if atoms[0].get_potential_energy() == 0:  #没有搜索到过渡态
             barrier = 0

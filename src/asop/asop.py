@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 import os
 from typing import Optional, Tuple, List, Dict
 import timeout_decorator
@@ -7,7 +8,6 @@ from ase import Atoms, Atom
 from ase.build import fcc110
 from ase.data import covalent_radii
 from ase.geometry import wrap_positions
-from ase.io import write
 import numpy as np
 from numpy.linalg import norm
 import torch
@@ -19,6 +19,9 @@ from surface_env import MCTEnv
 K = 8.617 * 10E-5
 r_Ag = covalent_radii[47]
 r_O = covalent_radii[8]
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 @dataclass
 class ASOP():
@@ -73,16 +76,23 @@ class ASOP():
             self.rectify_position(atoms)
             
             A_matrix_2D = possible_A[grid_index]
-            print(f"TM is {A_matrix_2D}", flush=True)
+            logger.info(f"Logger Info: TM is {A_matrix_2D}")
             A_matrix = np.array([[A_matrix_2D[0][0], A_matrix_2D[0][1], 0],
                                  [A_matrix_2D[1][0], A_matrix_2D[1][1], 0],
                                  [0                , 0                , 1]])
             atoms.set_cell(np.dot(A_matrix, primitive_cell))
             self.in_cell(atoms)
+            
+            if self.judge_structure(atoms):
+                logger.warning(f"Logger Warning: {self.judge_structure(atoms)}")
+                continue
 
             # calculate energy of clean surface
-            self.env.to_constraint(atoms)
-            atoms, initial_energy, _ = self.calculator(atoms)
+            try:
+                atoms,initial_energy = self.initial_energy(atoms)
+            except:
+                logger.warning(f"Logger Warning: TM {A_matrix_2D} Failed")
+                break
            
             A = np.cross(A_matrix_2D[0], A_matrix_2D[1])
             for n_Ag in range(A):
@@ -92,9 +102,8 @@ class ASOP():
                     new_state = atoms.copy()
                     # Stage A: Initial structure generation
                     if self.calculator_method in ['LASP', 'Lasp', 'lasp']:
-                        print(n_Ag, n_O)
+                        logger.info(f"Logger Info: Ag is {n_Ag}, O is {n_O}")
                         new_state = self.choose_ads_site(new_state, n_Ag, n_O)
-                        write('test.xyz', new_state)
                     else:
                         u_p,v_p = A_matrix_2D
                         norm_u = np.round(norm(u_p), 3)
@@ -114,7 +123,7 @@ class ASOP():
                                 # new_state = self.choose_ads_site(new_state, n_Ag, n_O)
                                 new_state = ga(new_state, atom_numbers)
                             except:
-                                print(f'Logging Failed: TM is {A_matrix_2D}, Ag:{n_Ag}, O:{n_O}')
+                                logger.warning(f'Logging Warning: TM is {A_matrix_2D}, Ag:{n_Ag}, O:{n_O}')
                                 continue
                     
                     # stage B-C
@@ -128,8 +137,9 @@ class ASOP():
                         history['Ag'].append(n_Ag)
                         history['O'].append(n_O)
                     except:
-                        print(f'Logging Failed: TM is {A_matrix_2D}, Ag:{n_Ag}, O:{n_O}')
-                    
+                        logger.warning(f'Logging Warning: TM is {A_matrix_2D}, Ag:{n_Ag}, O:{n_O}')
+                        break
+
             self.save_atoms(history, 
                             possible_A, 
                             possible_grids,
@@ -153,7 +163,7 @@ class ASOP():
             grids = possible_grids,
         )
 
-    @timeout_decorator.timeout(1200)
+    @timeout_decorator.timeout(600)
     def get_energy(self, atoms:Atoms) -> Tuple[float, np.asarray]:
         new_state = atoms.copy()
 
@@ -179,7 +189,7 @@ class ASOP():
         # A function just like material studio "in cell" display
         scaled_positions = atoms.get_scaled_positions()
         del atoms[[[atom_idx for atom_idx in range(len(atoms)) \
-                    if max(scaled_positions[atom_idx]) >= 1 or \
+                    if max(scaled_positions[atom_idx]) >= 1 - 10E-3 or \
                        min(scaled_positions[atom_idx]) < -10E-3]]]
         atoms.set_pbc([True, True, False])
 
@@ -387,6 +397,17 @@ class ASOP():
         current_energy -= self.E_Ag * n_Ag + self.E_O * n_O
         miu = (current_energy - initial_energy) / A
         return miu
+    
+    def judge_structure(self, atoms):
+        positions = atoms.get_positions().tolist()
+        return [atom_idx for atom_idx, position in enumerate(positions) \
+                if position in positions[:atom_idx]]
+    
+    @timeout_decorator.timeout(60)
+    def initial_energy(self, atoms):
+        self.env.to_constraint(atoms)
+        atoms, initial_energy, _ = self.calculator(atoms)
+        return atoms, initial_energy
     
     def postprocessing(self):
         # This part is for the  Step 3: Favorable composition determination
