@@ -72,7 +72,7 @@ class ASOP():
         possible_A, possible_grids, A_list = self.possible_grids()
         # Step 2: Structure exploration for compositions in a grid
         for grid_index in range(len(possible_grids)):
-            grid_index = len(possible_grids) - grid_index - 1
+            grid_index = len(possible_grids)
             atoms = self.initial_slab.copy()
             # move the atoms to the center of the slab
             self.rectify_position(atoms)
