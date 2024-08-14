@@ -281,7 +281,6 @@ class ASOP():
                 norm_u = np.round(norm(h), 3)
                 norm_v = np.round(norm(k), 3)
                 if (norm_u, norm_v) in norm_hk_list:
-                    print((norm_u, norm_v))
                     continue
                 
                 A_list.append(mo_hk)
