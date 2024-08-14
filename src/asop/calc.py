@@ -1,6 +1,5 @@
 from typing import List,Tuple
 from dataclasses import dataclass
-import time
 import torch
 
 import ase
@@ -13,7 +12,7 @@ from ase.optimize import LBFGS
 
 from lasp import LASP
 
-LASP_COMMAND = 'unset $(compgen -v | grep SLURM); unset SLURM_PROCID;mpirun -np 24 lasp'
+LASP_COMMAND = 'mpirun lasp'
 @dataclass
 class Calculator:
     model_path: str = None
