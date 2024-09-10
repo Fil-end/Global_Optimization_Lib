@@ -34,11 +34,11 @@ from calc import Calculator
 
 bottom_z = 10.7
 deep_z = 12.1
-sub_z = 14.0
-surf_z = 15.6
-layer_z = 19.4
+sub_z = 16.1
+surf_z = 18.1
+layer_z = 21.1
 
-fluct_d_metal = 0.8
+fluct_d_metal = 1.0
 fluct_d_layer = 3.0
 
 r_O = covalent_radii[8]
@@ -1207,7 +1207,7 @@ class MCTEnv(gym.Env):
     
     def get_constraint(self, atoms:Atoms) -> FixAtoms:
         bottomList = self.get_bottom_list(atoms)
-        bottomList.extend(self.get_deep_list(atoms))
+        # bottomList.extend(self.get_deep_list(atoms))
         constraint = FixAtoms(mask=[a.symbol == self.metal_ele and a.index in bottomList for a in atoms])
         return constraint
     
@@ -1604,7 +1604,7 @@ class MCTEnv(gym.Env):
         return self.label_atoms(atoms, [deep_z - fluct_d_metal, deep_z + fluct_d_metal])
     
     def get_bottom_list(self, atoms:Atoms) -> List[int]:
-        return self.label_atoms(atoms, [bottom_z - fluct_d_metal, bottom_z + fluct_d_metal])
+        return self.label_atoms(atoms, [9.0, 13.0])
 
     def layer_O_atom_list(self, slab:Atoms) -> List[int]:
         layer_O = []

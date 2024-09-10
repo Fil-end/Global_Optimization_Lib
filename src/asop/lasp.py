@@ -69,12 +69,12 @@ class LASP(FileIOCalculator):
     """
         with open('lasp.in', 'w') as f:
             f.write(f"potential {params['potential']}\nexplore type {params['explore']}\n")
-            s = self.split_pot_elements(pot_name=params['pot'])
-            cmd = f"cp /home/xmcao/sychen/LASP/pot/{params['pot']}.pot ./"     # on genzi
+            s = self.split_pot_elements(pot_name=params['pot'].split('.')[0])
+            cmd = f"cp /dssg/home/acct-xmcao/xmcao/sychen/work/LASP/pot/{params['pot']} ./"     # on genzi
             os.system(cmd)
             f.write('%block netinfo\n')
             for i in s:
-                f.write(f' {i} {params["pot"]}.pot\n')
+                f.write(f' {i} {params["pot"]}\n')
 
             f.write(f'%endblock netinfo\n')
 
@@ -83,7 +83,7 @@ class LASP(FileIOCalculator):
             if params['task'] == 'ssw':
                 f.write('Run_type 5\nSSW.ftol 0.05\nSSW.strtol 0.05\nSSW.output T\nSSW.printevery T\nSSW.Temp 200\nSSW.SSWsteps 1\n')
             if params['task'] == 'long-ssw':
-                f.write('Run_type 5\nSSW.ftol 0.05\nSSW.strtol 0.05\nSSW.output T\nSSW.printevery T\nSSW.Temp 200\nSSW.SSWsteps 200\n')
+                f.write('Run_type 5\nSSW.ftol 0.05\nSSW.strtol 0.05\nSSW.output T\nSSW.printevery T\nSSW.Temp 200\nSSW.SSWsteps 300\n')
             if params['task'] == 'opt':
                 f.write('Run_type 0\nSSW.ftol 0.05\nSSW.strtol 0.05\nSSW.output T\nSSW.printevery T\nSSW.Temp 200\nSSW.MaxOptstep           200\n')
             if params['task'] == 'TS':
