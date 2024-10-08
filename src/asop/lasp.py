@@ -53,6 +53,10 @@ class LASP(FileIOCalculator):
             self.reset()
 
     def split_pot_elements(self, pot_name):
+        if '.' in pot_name:
+            pot_name = pot_name.split('.')[0]
+        if '_' in pot_name:
+            pot_name = pot_name.split('_')[0]
         elements = re.findall(r'[A-Z]', pot_name)
         merged_elements = re.findall(r'[A-Z][a-z]', pot_name) 
         for i in range(len(pot_name)):
@@ -69,7 +73,7 @@ class LASP(FileIOCalculator):
     """
         with open('lasp.in', 'w') as f:
             f.write(f"potential {params['potential']}\nexplore type {params['explore']}\n")
-            s = self.split_pot_elements(pot_name=params['pot'].split('.')[0])
+            s = self.split_pot_elements(pot_name=params['pot'])
             cmd = f"cp /dssg/home/acct-xmcao/xmcao/sychen/work/LASP/pot/{params['pot']} ./"     # on genzi
             os.system(cmd)
             f.write('%block netinfo\n')
@@ -170,6 +174,8 @@ class LASP(FileIOCalculator):
             flag = self._split_allfor()
             if flag == 1:
                 filename = "force.tmp"
+            elif p['task'] == 'long-ssw':
+                filename = 'best.arc'
             else:
                 filename = "allfor.arc"
 
