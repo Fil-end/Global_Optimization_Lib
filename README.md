@@ -1,13 +1,16 @@
 # Global_Optimization_Lib
 
-The `global_optimization` package is a Python library designed for restoration of global optimization algorithms.
+  The `global_optimization` package is a Python library designed for restoration of global optimization algorithms.  
+  Currently, the io between `ase.Atoms` and `mealpy` project (a library which restores comprehensive global opitimization algorithms)   
+has been preliminarily added into this project for further research.
 
 ## Currently restored
 
-​ `ga`: `src/ga/ga.py`  
+​  `ga`: `src/ga/ga.py`  
   `ssw`: `src/ssw/main.py`  
   `asop`: `src/asop/asop.py`  
-  `gwo`: `src/gwo/GWO.py`
+  `gwo`: `src/gwo/GWO.py`  
+  `mealpy`: `src/mealpy_io`
   
 ## Tips
 
