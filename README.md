@@ -1,8 +1,7 @@
 # Global_Optimization_Lib
 
   &emsp;The `global_optimization` package is a Python library designed for restoration of global optimization algorithms.  
-  &emsp;Currently, the io between `ase.Atoms` and `mealpy` project (a library which restores comprehensive global optimization  
-  algorithms) has been preliminarily added into this project for further research.
+  &emsp;Currently, the io between `ase.Atoms` and `mealpy` project (a library which restores comprehensive global optimization algorithms) has been preliminarily added into this project for further research.
 
 ## Currently restored
 
@@ -14,8 +13,7 @@
   
 ## Tips
 
-  &emsp;Here we bind `calculator_method:LASP` to `SSW` while `calculator_method: MACE` to `GA`.  
-    (Currently, our main choice in `asop` is `calculator_method: LASP` to `SSW`, because `SSW` is a much more efficient global optimization algorithm than `GA`).
+  &emsp;Here we bind `calculator_method:LASP` to `SSW` while `calculator_method: MACE` to `GA`. (Currently, our main choice in `asop` is `calculator_method: LASP` to `SSW`, because `SSW` is a much more efficient global optimization algorithm than `GA`).
 
 ## Developing  
 
