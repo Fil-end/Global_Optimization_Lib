@@ -1,30 +1,26 @@
 from ast import literal_eval
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
+import os
+from typing import List, Optional, Tuple, Dict
 
 from ase import Atoms
 from ase.calculators.emt import EMT
 from ase.constraints import FixAtoms
 from ase.data import chemical_symbols
-from ase.ga.startgenerator import StartGenerator
-from ase.ga.utilities import (closest_distances_generator,
-                              get_all_atom_types)
 from ase.io import read
 from ase.io.dmol import read_dmol_arc, write_dmol_arc
 from ase.optimize import LBFGS
-import logging
 import numpy as np
 from spglib import get_symmetry_dataset
 from timeout_decorator import timeout
 
+import mealpy
 from mealpy import *
 import yaml
 
 from calc import Calculator
 from EDRL.tools.periodic_table import METALLIST, NONMETALLIST
 from EDRL.tools.sites import Sites
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 #                       _oo0oo_
 #                      o8888888o
@@ -54,20 +50,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # For direct example: PdO, PdC, CuO
 # Comparison: GA, PSO, LC-SSW, etc.
 
-OPT_ALGORITHMS_FACTORY = {
-    "GWO": GWO.OriginalGWO,
-    "GWO_WOA": GWO.GWO_WOA,
-    "PSO": PSO.OriginalPSO,
-    "WOA": WOA.OriginalWOA,
-    "HI_WOA": WOA.HI_WOA,
-}
+OPT_ALGORITHMS_FACTORY = mealpy.get_all_optimizers()
 
 @dataclass
 class EquivariantAtomsProblem(Problem):
     orig_atoms: Atoms
     ele_list: List
-    calculate_method: str
-    model_path: str = None
+    setting: Dict
     box: np.asarray = None
 
     # Currently not used
@@ -76,26 +65,23 @@ class EquivariantAtomsProblem(Problem):
     use_symmetry: bool = True
 
     def __post_init__(self, **kwargs):
-        # unique_atom_types = get_all_atom_types(self.orig_atoms, self.ele_list)
-        # blmin = closest_distances_generator(atom_numbers=unique_atom_types,
-        #                                     ratio_of_covalent_radii=0.6)
-        
-        # self.sg = StartGenerator(self.orig_atoms, self.ele_list, blmin,
-        #                     box_to_place_in=self.box)
+        self.calculate_method = self.setting['Calculator']
+        self.model_path = self.setting['model']
+        self.opt_alg = self. setting['Global-opt']['algorithms']
 
-        # self.atoms = self.sg.get_new_candidate(maxiter = 10000)
         self._order_ele_list()
-        self.atoms = Sites(self.orig_atoms, self.ele_list)()
+
+        if os.path.exists(f'opt_{self.opt_alg}.arc'):
+            self.atoms = read_dmol_arc(f'opt_{self.opt_alg}.arc')
+            self.atoms.set_constraint(FixAtoms(mask=len(self.orig_atoms) * [True]))
+        else:
+            self.atoms = Sites(self.orig_atoms, self.ele_list)()
+            self.atoms.pbc = True
+            write_dmol_arc('input.arc', [self.atoms])
+            raise ValueError('stop')
+
         self.atoms.pbc = True
-
-        # 对称性分析
-        # self.sym_ops = self._get_symmetry_operations(atoms) if self.use_symmetry else None
-
-        # 生成优化变量参数化
-        # TODO: 将orig_atoms 作为模版基底，将 ele_list 作为待优化原子的元素列表
-        # 并将box作为限制条件
-        # self.param_mapping = self._parameterize_variables(atoms)
-        # print(self.param_mapping)
+        self.atoms, self.initial_energy = self._opt(self.atoms)
 
         # 定义优化变量边界（原子坐标）
         max_free_z = max(self.orig_atoms.positions[:, 2]) + 0.5
@@ -106,8 +92,10 @@ class EquivariantAtomsProblem(Problem):
             if (p_idx + 1) % 3 == 0:
                 bounds.append((max(max_free_z, pos[p_idx]-2.0), 
                                min(max_free_z + self.box[1][2][2], pos[p_idx]+2.0)))
-            else:
-                bounds.append((pos[p_idx]-5.0, pos[p_idx]+5.0))
+            elif (p_idx + 1) % 3 == 1:
+                bounds.append((0, cell[0][0]))
+            elif (p_idx + 1) % 3 == 2:
+                bounds.append((0, cell[1][1]))
 
         # 初始化mealpy问题
         super().__init__(
@@ -150,87 +138,7 @@ class EquivariantAtomsProblem(Problem):
             print(f"对称性分析失败: {str(e)}")
             return None
 
-    '''def _parameterize_variables(self, atoms:Atoms) -> Dict:
-        """修复：对称性参数化的维度问题"""
-        pos = atoms.positions
-        n_atoms = len(pos)
-
-        # 检测自由原子
-        mask = np.zeros((n_atoms, 3), bool)
-        if self.orig_atoms.constraints:
-            for constr in self.orig_atoms.constraints:
-                if isinstance(constr, FixAtoms):
-                    mask[constr.index] = True
-        free_mask = ~mask.any(axis=1)
-        
-        # 对称性参数化
-        if self.use_symmetry and self.sym_ops:
-            equiv_groups = self._group_equivalent_atoms()
-            variables = []
-            bounds = []
-
-            # 收集独立变量
-            processed = set()
-            for group in equiv_groups:
-                rep = min(group)
-                if free_mask[rep] and rep not in processed:
-                    processed.add(rep)
-                    variables.extend(pos[rep])
-                    bounds.extend([(x-self.delta, x+self.delta) for x in pos[rep]])
-
-            return {
-                "vars": np.array(variables),
-                "bounds": bounds,
-                "mask": free_mask,
-                "equiv_groups": equiv_groups
-            }
-        else:
-            # 常规参数化
-            flat_pos = pos[free_mask].flatten()
-            return {
-                "vars": flat_pos,
-                "bounds": [(x-self.delta, x+self.delta) for x in flat_pos],
-                "mask": free_mask,
-                "equiv_groups": None
-            }'''
-
-    def _group_equivalent_atoms(self):
-        """修复：处理空对称操作的情况"""
-        if not self.sym_ops:
-            return []
-        equiv_atoms = self.sym_ops["equivalent_atoms"]
-        groups = {}
-        for i, eq in enumerate(equiv_atoms):
-            groups.setdefault(eq, []).append(i)
-        return list(groups.values())
-
     def _reconstruct_structure(self, solution):
-        """修复：结构重建中的计算器设置和对称性应用"""
-        '''atoms = self.orig_atoms.copy()
-        atoms.calc = self.orig_atoms.calc  # 确保计算器存在
-        solution = np.array(solution, dtype=float)
-
-        if self.param_mapping["equiv_groups"] and self.sym_ops:
-            # 对称性约束重建
-            new_pos = atoms.positions.copy()
-            var_pos = solution.reshape(-1, 3)
-            current_var = 0
-
-            for group in self.param_mapping["equiv_groups"]:
-                rep = min(group)
-                if self.param_mapping["mask"][rep]:
-                    base_pos = var_pos[current_var]
-                    for atom in group:
-                        if self.param_mapping["mask"][atom]:
-                            new_pos[atom] = base_pos
-                    current_var += 1
-            atoms.positions = new_pos
-        else:
-            # 常规重建
-            free_pos = atoms.positions[self.param_mapping["mask"]]
-            free_pos[:] = solution.reshape(free_pos.shape)
-            atoms.positions[self.param_mapping["mask"]] = free_pos'''
-        
         # TODO: check whether the target solution is incorrect
         atoms = self.atoms.copy()
         atoms.positions[-len(self.ele_list):] = solution.reshape(-1, 3)
@@ -241,11 +149,10 @@ class EquivariantAtomsProblem(Problem):
         """修复：添加详细的错误处理"""
         try:
             _, energy = self._reconstruct_structure(solution)
-            return energy
+            return 100 * (energy - self.initial_energy)
 
         except Exception as e:
-            logging.error(f"能量计算失败: {str(e)}", exc_info=True)
-            return np.inf
+            raise ValueError(f"能量计算失败: {str(e)}", exc_info=True)
 
     @timeout(30)
     def _opt(self, atoms: Atoms) -> Tuple[Atoms, float]:
@@ -266,8 +173,34 @@ class EquivariantAtomsProblem(Problem):
             else:
                 return atoms, energy
         except:
-            return atoms, np.inf
+            return atoms, 0
+        
+    def save_episode(self, history: Dict) -> None:
+        atoms = self.atoms.copy()
+        global_best_structure = []
+        global_best_energy = []
 
+        for target in history.list_global_best:
+            atoms.positions[-len(self.ele_list):] = target.solution.reshape(-1, 3)
+            atoms, energy = self._opt(atoms)
+            global_best_structure.append(atoms.positions)
+            global_best_energy.append(energy)
+
+        save_path = os.path.join('.', f'{self.opt_alg}.npz')
+        np.savez_compressed(
+                save_path,
+                
+                initial_energy=self.initial_energy,
+                structures =  global_best_structure,
+                energy = global_best_energy,
+                global_best = history.list_global_best,
+                global_best_fit = history.list_global_best_fit,
+                epoch_time = history.list_epoch_time,
+                diversity = history.list_diversity,
+                exploitation = history.list_exploitation,
+                exploration = history.list_exploration,
+                population = history.list_population,
+            )
 
 def main(setting,
          orig_atoms: Optional[Atoms] = None,
@@ -278,23 +211,32 @@ def main(setting,
     if orig_atoms is not None and box is None:
         box = orig_atoms.cell
 
-    opt_alg = OPT_ALGORITHMS_FACTORY[setting['Global-opt']['algorithms']]
-    # if opt_alg in REGISTER_GO_LIST:
-    problem = EquivariantAtomsProblem(orig_atoms=orig_atoms,
-                                        ele_list=atom_numbers,
-                                        box=box,
-                                        calculate_method=setting['Calculator'],
-                                        model_path=setting['model'],
-                                        **kwargs)
+    opt_alg = setting['Global-opt']['algorithms']
 
-    model = opt_alg(int(setting['Global-opt']['epoch']), 
-                    int(setting['Global-opt']['pop_size']))
+    if opt_alg in OPT_ALGORITHMS_FACTORY:
+        problem = EquivariantAtomsProblem(orig_atoms=orig_atoms,
+                                          ele_list=atom_numbers,
+                                          box=box,
+                                          setting = setting,
+                                          **kwargs)
+        
+        model = mealpy.get_optimizer_by_name(opt_alg) \
+                            (int(setting['Global-opt']['epoch']), int(setting['Global-opt']['pop_size']))
 
-    best_solution = model.solve(problem)
-    opt_slab, _ = problem._reconstruct_structure(best_solution.solution)
+        best_solution = model.solve(problem,
+                                    atoms = problem.atoms,
+                                    local_opt = True,
+                                    calculate_method=setting['Calculator'],
+                                    model_path=setting['model'])
+        
+        opt_slab, _ = problem._reconstruct_structure(best_solution.solution)
 
-    opt_slab.pbc = True
-    write_dmol_arc(f"opt_{setting['Global-opt']['algorithms']}.arc", [opt_slab])
+        opt_slab.pbc = True
+        write_dmol_arc(f"opt_{setting['Global-opt']['algorithms']}.arc", [opt_slab])
+
+        problem.save_episode(model.history)
+    else:
+        raise ValueError(f"{opt_alg} not in Mealpy algorithms !")
 
     return opt_slab
 
